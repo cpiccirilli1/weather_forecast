@@ -5,7 +5,7 @@ from xml.etree import ElementTree as ET
 import json
 import argparse
 import platform
-import os
+import os, sys
 from time import sleep
 import datetime as dt
 from writer import Writer as ww
@@ -65,64 +65,64 @@ class nws_api:
 		url = "https://api.weather.gov/points/{0},{1}".format(self.lat, self.lng)
 		req = requests.get(url)
 		data = req.json()
+		sleep(1)
 		forecast = requests.get(data["properties"]['forecast'])
 		new_cast = forecast.json()
-		periods = new_cast['properties']['periods']
-		print(periods)
-		return periods
+		if new_cast.get('title', 'Not existant') == 'Data Unavailable For Requested Point':
+			print(new_cast['title'])
+			sys.exit()
+		else:	
+			periods = new_cast['properties']['periods']
+			return periods
 
 	def write_json(self, file):
-		data = self.api_call()
+		data = self.api_call()	
 		with open(file, 'w+') as weather:
 			json.dump(data, weather)
 
 	def read_json(self, file):
 		with open(file, 'r') as weather:
-			w = json.load(weather)
-
-		periods = w['properties']['periods']	
-		return periods	
+			w = json.load(weather)	
+		return w	
 	
 	def _day_ident(self, forecast_range, conn):
 		day_parts = ['This Afternoon', 'Tonight', 'Today']
 		day_times = []
-
+		forecast_range = int(forecast_range)
 		if forecast_range == 1:
 			if not conn:
 				day_times = [str(dt.datetime.strftime(dt.datetime.now(),"%A"))]
 			else:	
 				day_times += day_parts #returns day_parts if no other is required
-		elif forecast_range:
+			return day_times		
+		elif forecast_range > 1:
 			if not conn:
 				day_times = self._no_network_day_comp(forecast_range)
 			else:	
 				custom  = self._day_comp(forecast_range)
 				
 				day_times += custom + day_parts
+			return day_times	
 		else:
 			print('Please use one of the presets or the -day flag for any day seven or lower')
 			print ('weather -day <int>')	
-		print(day_times)	
-		return day_times 
+
 	
 	def _day_comp(self, f_range):
 		incrimentor = dt.timedelta(days=1) #sets the delta to incriment the days
 		today = dt.datetime.now() #todays day.
-		print(today)
 		comprehension = [str(dt.datetime.strftime(today+(incrimentor*i), '%A')) for i in range(1, f_range+1)]
-		print(comprehension)
 		return comprehension
 
 	def _no_network_day_comp(self, f_range):
 		incrimentor = dt.timedelta(days=1) #sets the delta to incriment the days
 		today = dt.datetime.now() #todays day.
-		comprehension = [str(dt.datetime.strftime(today+(incrimentor*i), '%A')) for i in range(1, f_range+1)]
-		comprehension += [str(dt.datetime.strftime(today, '%A'))]
-		print (comprehension)
+		comprehension = [str(dt.datetime.strftime(today, '%A'))]
+		comprehension += [str(dt.datetime.strftime(today+(incrimentor*i), '%A')) for i in range(1, f_range+1)]
 		return comprehension
 
 	def weather_parse(self, f_range):
-		internet = internet_conn(timeout=1)
+		internet = internet_conn(timeout=3)
 		if internet:
 			periods = self.api_call()
 		else:
@@ -158,7 +158,7 @@ class location_info:
 
 	def get_loc_data(self):
 		file_path = os.path.join(str(Path.home()),'.zip_code')
-		loc_data = self.loc_data(file_path)
+		
 		
 		if self.args.zip_code: #zip code from argparse
 			if not self.args.username: 
@@ -168,47 +168,49 @@ class location_info:
 				geo = geonames(self.args.zip_code, self.args.username) 
 				#api.geonames.org call returns {'county': 'Paulding', 'postalcode': '30157', 'countryCode': 'US', 'name': 'Dallas', 'state_code': 'GA', 'lng': '-84.86214', 'lat': '33.90448'}		
 			info = geo.info_parse(geo.api_call())
-			
-
-			print(info)
-			return (self.args.zip_code, info["lat"], info['lng'], self.args.username)
-			'''
-			if not os.path.isfile(file_path): #creates a dot file if none.
-				with open(file_path, 'w+') as zip_f: 
-					info_tup = (self.args.zip_code, info["lat"], info['lng'], self.args.username)
-					zip_f.write(info_tup)
-					return info_tup	
-			else:
-				pass
-			
+			data = (self.args.zip_code, info["lat"], info['lng'], self.args.username)
+			self.zip_info_store(file_path=file_path, info=data)
+			#self.alias_append()
+			return data			
 		else:
+		
+			loc_data = self.loc_data(file_path)
 			return loc_data
-			'''	
+			
+	def zip_info_store(self, file_path, info):		
+		zip_dict = dict()
+		zip_list= ['zip', 'lat', 'lng', 'user']
+		for en, z in enumerate(zip_list):			
+			zip_dict[z]=info[en]
 
-	def alias_append(self):
-		pass	
-		'''	
-		bash_alias = os.path.join(str(Path.home()),'.bash_aliases') #path to aliases list
-		if platform.system() == "Linux": #checks if linux system
-			f_path = os.getcwd()+'/weather.py' #path to program
-			alias = ww(title=bash_alias) #homebrewed textwriter module
-			lines = alias.txtReader(mode='r')
-			if f_path not in lines:
-				alias.txtWriter(mode='a', text='alias pod="python3 {}"'.format(f_path))
-			else:
-				pass
+		print(zip_dict)	
+		if not os.path.isfile(file_path): #creates a dot file if none.
+			with open(file_path, 'w+') as file_info:
+				json.dump(zip_dict, file_info)					
 		else:
 			pass
-		'''
+					
+			
+	def alias_append(self):	
+		bash_alias = os.path.join(str(Path.home()),'.bash_aliases') #path to aliases list
+		if platform.system() == "Linux": #checks if linux system
+			if os.path.isfile('weather.py') and not os.path.isfile('.bash_aliases'):
+				f_path = os.getcwd()+'/weather.py' #path to program
+				alias = ww(title=bash_alias) #homebrewed textwriter module
+				alias.txtWriter(mode='a', text='alias weather="python3 {}"\n'.format(f_path))
+			else:
+				pass		
+		else:
+			print('You have a non-posix system where aliases are not used')
+
 
 	def loc_data(self, file_path):
 		try:
 			with open(file_path, 'r') as zip_f:
-				data = zip_f.readline()
+				data = json.load(zip_f)
 				return data
 		except FileNotFoundError:
-			with open(file_path, 'w+') as new_file:
-				new_file.write(self.args.zip_code)						
+			print("It's a mystery")						
 
 def internet_conn(url='http://www.google.com', timeout=3):
 	try:
@@ -218,38 +220,44 @@ def internet_conn(url='http://www.google.com', timeout=3):
 		
 		return False		
 
+def weather_get(arg_com, nws):
+	parse = nws.weather_parse(f_range=arg_com)
+	nws.forecast(parse)
+
 
 def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument('-z', dest='zip_code')
 	parser.add_argument('-user', type=str, dest='username')
-	parser.add_argument('-today', default=1, dest='today', type=int)
-	parser.add_argument('-3day', default=3, dest='three', type=int)
-	parser.add_argument('-7day', default=7, dest = 'seven', type=int)
-	parser.add_argument('-day', default=5, dest='custom', type=int)
+	parser.add_argument('-today', const=1, dest='now', type=int, nargs="?")
+	parser.add_argument('-three', dest='three',const=3, type=int, nargs="?")
+	parser.add_argument('-seven', const=7, dest = 'seven', nargs='?', type=int)
+	parser.add_argument('-day', const=5, nargs='?', dest='custom', type=int)
 	parser.add_argument('-test', action='store_true')
 	args = parser.parse_args()
-
 	start = dt.datetime.now()
 	internet = internet_conn('http://www.google.com', timeout=3)
 	
 	if internet:
 		location = location_info(args)
-		zip_location, lat, lng, username = location.get_loc_data()
-		sleep(1)
+		if args.zip_code:
+			zip_location, lat, lng, username = location.get_loc_data()
+			sleep(1)
+		else:
+			local = location.get_loc_data()
+			zip_location, lat, lng, username =local['zip'], local['lat'], local['lng'], local['user']	
 		nws = nws_api(lat=lat, lng=lng)	
 		nws.write_json('weather.txt')
-		if args.today:
-			parse = nws.weather_parse(f_range=args.today)
-			nws.forecast(parse)
+		if args.now:
+			weather_get(args.now, nws)
 		elif args.three:
-			parse = nws.weather_parse(f_range=args.three)
-			nws.forecast(parse)
+			weather_get(args.three, nws)
 		elif args.seven:
-			parse = nws.weather_parse(f_range=args.seven)
-			nws.forecast(parse)
+			weather_get(args.seven, nws)
+		elif args.custom:
+			weather_get(args.custom, nws)
 		else:
-			pass						
+			weather_get(args.custom, nws)						
 
 		print(dt.datetime.now() - start)
 
